@@ -2,57 +2,79 @@
 # Quick start script for macOS/Linux
 # Run from project root directory
 
+set -e  # Exit on error
+
 echo "=== Image Summarizer Quick Start ==="
+
+# Get script directory (project root)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Check .env exists
 if [ ! -f .env ]; then
     echo "Copying .env.example to .env..."
     cp .env.example .env
-    echo "Please edit .env and set OPENAI_API_KEY"
+    echo ""
+    echo "IMPORTANT: Edit .env and set OPENAI_API_KEY before running again."
+    echo ""
     exit 1
 fi
 
-# Setup backend
-echo "Setting up backend..."
-cd backend
-if [ ! -d .venv ]; then
+# Check backend venv exists
+if [ ! -d backend/.venv ]; then
+    echo "Creating backend virtual environment..."
+    cd backend
     python3 -m venv .venv
+    cd "$SCRIPT_DIR"
 fi
+
+# Install backend dependencies
+echo "Installing backend dependencies..."
+cd backend
 source .venv/bin/activate
-pip install -r requirements.txt -q
-cd ..
+pip install -r requirements.txt
+deactivate
+cd "$SCRIPT_DIR"
 
-# Setup frontend
-echo "Setting up frontend..."
-cd frontend
-npm install --silent
-cd ..
+# Check frontend node_modules exists
+if [ ! -d frontend/node_modules ]; then
+    echo "Installing frontend dependencies..."
+    cd frontend
+    npm install
+    cd "$SCRIPT_DIR"
+fi
 
-# Start backend in background
-echo "Starting backend..."
+echo ""
+echo "Starting servers..."
+echo ""
+
+# Start backend
 cd backend
 source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000 &
 BACKEND_PID=$!
-cd ..
+deactivate
+cd "$SCRIPT_DIR"
 
-# Wait for backend to start
+# Wait for backend
 sleep 3
 
-# Start frontend in background
-echo "Starting frontend..."
+# Start frontend
 cd frontend
 npm run dev &
 FRONTEND_PID=$!
-cd ..
+cd "$SCRIPT_DIR"
 
 echo ""
-echo "Backend: http://localhost:8000"
+echo "========================================"
+echo "Backend:  http://localhost:8000"
 echo "Frontend: http://localhost:3000"
 echo "API Docs: http://localhost:8000/docs"
+echo "========================================"
 echo ""
 echo "Press Ctrl+C to stop servers"
+echo ""
 
-# Wait for Ctrl+C
+# Handle Ctrl+C
 trap "echo 'Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" SIGINT SIGTERM
 wait
