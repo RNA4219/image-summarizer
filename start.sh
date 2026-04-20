@@ -1,5 +1,6 @@
 #!/bin/bash
 # Quick start script for macOS/Linux
+# Run from project root directory
 
 echo "=== Image Summarizer Quick Start ==="
 
@@ -11,14 +12,26 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Start backend
-echo "Starting backend..."
+# Setup backend
+echo "Setting up backend..."
 cd backend
 if [ ! -d .venv ]; then
     python3 -m venv .venv
 fi
 source .venv/bin/activate
 pip install -r requirements.txt -q
+cd ..
+
+# Setup frontend
+echo "Setting up frontend..."
+cd frontend
+npm install --silent
+cd ..
+
+# Start backend in background
+echo "Starting backend..."
+cd backend
+source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000 &
 BACKEND_PID=$!
 cd ..
@@ -26,10 +39,9 @@ cd ..
 # Wait for backend to start
 sleep 3
 
-# Start frontend
+# Start frontend in background
 echo "Starting frontend..."
 cd frontend
-npm install --silent
 npm run dev &
 FRONTEND_PID=$!
 cd ..
@@ -42,5 +54,5 @@ echo ""
 echo "Press Ctrl+C to stop servers"
 
 # Wait for Ctrl+C
-trap "echo 'Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID; exit 0" SIGINT
+trap "echo 'Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" SIGINT SIGTERM
 wait
