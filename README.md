@@ -4,8 +4,6 @@
 
 OCRと要約の処理方式を選択可能。クラウドAPI、ローカルLLM、高精度OCRを組み合わせて利用できます。
 
-**GitHub**: [RNA4219/image-summarizer](https://github.com/RNA4219/image-summarizer)
-
 ## 使い方
 
 1. OCR方式と要約方式をラジオボタンで選択
