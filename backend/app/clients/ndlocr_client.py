@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -220,9 +221,12 @@ async def run_ndlocr_fallback(
         logger.error(f"ocr.py not found at {ocr_py_path}")
         raise NDLOCRExecutionFailedError("ocr.py not found")
 
+    # Use current Python executable to ensure dependencies are available
+    python_exe = sys.executable
+
     try:
         result = subprocess.run(
-            ["python", str(ocr_py_path), "--sourceimg", input_path, "--output", output_dir],
+            [python_exe, str(ocr_py_path), "--sourceimg", input_path, "--output", output_dir],
             cwd=str(ndlocr_path),
             capture_output=True,
             text=True,
@@ -239,8 +243,8 @@ async def run_ndlocr_fallback(
         logger.error("ocr.py timeout")
         raise NDLOCRTimeoutError()
     except FileNotFoundError:
-        logger.error("python command not found")
-        raise NDLOCRExecutionFailedError("python command not found")
+        logger.error(f"python not found at {python_exe}")
+        raise NDLOCRExecutionFailedError("python not found")
 
 
 def cleanup_temp_dir(output_dir: Path) -> None:
