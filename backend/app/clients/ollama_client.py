@@ -99,8 +99,14 @@ async def extract_text_with_ollama(
             )
 
             if response.status_code != 200:
-                logger.error(f"Ollama response error: {response.status_code}")
-                raise LocalLLMUnavailableError(f"Ollama returned status {response.status_code}")
+                error_detail = ""
+                try:
+                    error_json = response.json()
+                    error_detail = error_json.get("error", str(error_json))
+                except:
+                    error_detail = response.text[:500]
+                logger.error(f"Ollama response error: {response.status_code}, detail: {error_detail}")
+                raise LocalLLMUnavailableError(f"Ollama error: {error_detail}")
 
             result = response.json()
             text = result.get("response", "")
