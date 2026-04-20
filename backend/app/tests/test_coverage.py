@@ -1,6 +1,8 @@
 """Tests for preprocessing, normalization, file validation, and pipeline"""
 
 import pytest
+import subprocess
+from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 from io import BytesIO
 from PIL import Image
@@ -400,3 +402,431 @@ class TestMainApp:
 
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "INVALID_OCR_MODE"
+
+
+class TestRouterEndpoints:
+    """Tests for router endpoints"""
+
+    def test_summarize_endpoint_success(self):
+        """Test successful summarize endpoint"""
+        from app.main import app
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+
+        with patch("app.routers.summarize.process_single_image") as mock_process:
+            from app.schemas.summarize import SingleFileResult, StructuredSummary
+            mock_result = SingleFileResult(
+                filename="test.jpg",
+                ocrMode="api",
+                summaryMode="api",
+                summary="Test summary",
+                structuredData=StructuredSummary(summary="Test summary"),
+                extractedText="Test text",
+                warnings=[],
+            )
+            mock_process.return_value = mock_result
+
+            response = client.post(
+                "/api/summarize",
+                files={"file": ("test.jpg", fake_image, "image/jpeg")},
+                data={"ocr_mode": "api", "summary_mode": "api"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["filename"] == "test.jpg"
+            assert response.json()["ocrMode"] == "api"
+
+    def test_summarize_multiple_endpoint(self):
+        """Test summarize multiple endpoint"""
+        from app.main import app
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        fake_image1 = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+        fake_image2 = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+
+        with patch("app.routers.summarize.process_single_image_safe") as mock_process:
+            from app.schemas.summarize import SingleFileResult, StructuredSummary
+            mock_result1 = SingleFileResult(
+                filename="test1.jpg",
+                ocrMode="api",
+                summaryMode="api",
+                summary="Summary 1",
+                structuredData=StructuredSummary(summary="Summary 1"),
+                extractedText="Text 1",
+                warnings=[],
+            )
+            mock_result2 = SingleFileResult(
+                filename="test2.jpg",
+                ocrMode="api",
+                summaryMode="api",
+                summary="",
+                structuredData=StructuredSummary(),
+                extractedText="",
+                warnings=[],
+                error="Error processing file",
+            )
+            mock_process.side_effect = [mock_result1, mock_result2]
+
+            response = client.post(
+                "/api/summarize-multiple",
+                files=[
+                    ("files", ("test1.jpg", fake_image1, "image/jpeg")),
+                    ("files", ("test2.jpg", fake_image2, "image/jpeg")),
+                ],
+                data={"ocr_mode": "api", "summary_mode": "api"},
+            )
+
+            assert response.status_code == 200
+            assert response.json()["totalFiles"] == 2
+            assert response.json()["successCount"] == 1
+            assert response.json()["errorCount"] == 1
+
+    def test_summarize_multiple_invalid_ocr_mode(self):
+        """Test summarize multiple with invalid OCR mode"""
+        from app.main import app
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+
+        response = client.post(
+            "/api/summarize-multiple",
+            files=[("files", ("test.jpg", fake_image, "image/jpeg"))],
+            data={"ocr_mode": "invalid", "summary_mode": "api"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "INVALID_OCR_MODE"
+
+    def test_summarize_multiple_invalid_summary_mode(self):
+        """Test summarize multiple with invalid summary mode"""
+        from app.main import app
+        from fastapi.testclient import TestClient
+
+        client = TestClient(app)
+
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+
+        response = client.post(
+            "/api/summarize-multiple",
+            files=[("files", ("test.jpg", fake_image, "image/jpeg"))],
+            data={"ocr_mode": "api", "summary_mode": "invalid"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "INVALID_SUMMARY_MODE"
+
+
+class TestOllamaClientCoverage:
+    """Tests for Ollama client additional coverage"""
+
+    @pytest.mark.asyncio
+    async def test_summarize_connection_error(self):
+        """Test connection error during summarization"""
+        from app.clients.ollama_client import summarize_text_with_ollama
+        from app.utils.exceptions import LocalLLMUnavailableError
+
+        with patch("app.clients.ollama_client.check_ollama_settings", return_value="model"):
+            with patch("httpx.AsyncClient") as mock_client:
+                mock_instance = AsyncMock()
+                mock_instance.post.side_effect = Exception("Connection failed")
+                mock_client.return_value.__aenter__.return_value = mock_instance
+
+                with pytest.raises(LocalLLMUnavailableError):
+                    await summarize_text_with_ollama("test")
+
+    def test_parse_summary_response_empty(self):
+        """Test parsing empty response"""
+        from app.clients.ollama_client import parse_ollama_summary_response
+
+        result = parse_ollama_summary_response("")
+
+        assert result["documentType"] == "不明"
+        assert result["summary"] == ""
+
+    def test_parse_summary_response_full(self):
+        """Test parsing full response"""
+        from app.clients.ollama_client import parse_ollama_summary_response
+
+        response = """文書種別: 給与明細
+対象期間: 2024年10月
+要約: 給与明細の要約です。
+詳細項目:
+支給額: 300,000円
+控除額: 50,000円
+不確実な項目:
+読み取り不確実な行"""
+
+        result = parse_ollama_summary_response(response)
+
+        assert result["documentType"] == "給与明細"
+        assert result["targetPeriod"] == "2024年10月"
+        assert result["summary"] == "給与明細の要約です。"
+        assert len(result["details"]) >= 1
+        assert len(result["uncertainItems"]) >= 1
+
+
+class TestNDLOCRClientCoverage:
+    """Tests for NDLOCR client coverage"""
+
+    @pytest.mark.asyncio
+    async def test_extract_text_ndlocr_unavailable(self):
+        """Test NDLOCR unavailable"""
+        from app.clients.ndlocr_client import extract_text_with_ndlocr
+        from app.utils.exceptions import NDLOCRUnavailableError
+
+        with patch("app.clients.ndlocr_client.check_ndlocr_settings", side_effect=NDLOCRUnavailableError()):
+            with pytest.raises(NDLOCRUnavailableError):
+                await extract_text_with_ndlocr(b"image", "test.jpg")
+
+    @pytest.mark.asyncio
+    async def test_run_ndlocr_lite_nonzero_exit(self):
+        """Test ndlocr-lite nonzero exit"""
+        from app.clients.ndlocr_client import run_ndlocr_lite
+        from app.utils.exceptions import NDLOCRExecutionFailedError
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_timeout_seconds = 60.0
+
+            mock_result = MagicMock()
+            mock_result.returncode = 1
+            mock_result.stderr = "Error"
+
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(NDLOCRExecutionFailedError):
+                    await run_ndlocr_lite(
+                        ndlocr_path=MagicMock(),
+                        input_path="test.jpg",
+                        output_dir="output",
+                    )
+
+    @pytest.mark.asyncio
+    async def test_run_ndlocr_lite_timeout(self):
+        """Test ndlocr-lite timeout"""
+        from app.clients.ndlocr_client import run_ndlocr_lite
+        from app.utils.exceptions import NDLOCRTimeoutError
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_timeout_seconds = 60.0
+
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 60)):
+                with pytest.raises(NDLOCRTimeoutError):
+                    await run_ndlocr_lite(
+                        ndlocr_path=MagicMock(),
+                        input_path="test.jpg",
+                        output_dir="output",
+                    )
+
+    @pytest.mark.asyncio
+    async def test_run_ndlocr_fallback_success(self):
+        """Test fallback success"""
+        from app.clients.ndlocr_client import run_ndlocr_fallback
+
+        mock_path = MagicMock()
+        mock_path.exists.return_value = True
+        mock_path.__truediv__ = MagicMock(return_value=MagicMock(exists=MagicMock(return_value=True)))
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_timeout_seconds = 60.0
+
+            with patch("subprocess.run", return_value=mock_result):
+                result = await run_ndlocr_fallback(
+                    ndlocr_path=MagicMock(),
+                    input_path="test.jpg",
+                    output_dir="output",
+                )
+
+                assert result.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_run_ndlocr_fallback_timeout(self):
+        """Test fallback timeout"""
+        from app.clients.ndlocr_client import run_ndlocr_fallback
+        from app.utils.exceptions import NDLOCRTimeoutError
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_timeout_seconds = 60.0
+
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 60)):
+                with pytest.raises(NDLOCRTimeoutError):
+                    await run_ndlocr_fallback(
+                        ndlocr_path=MagicMock(),
+                        input_path="test.jpg",
+                        output_dir="output",
+                    )
+
+    def test_cleanup_temp_dir_error(self):
+        """Test cleanup error handling"""
+        from app.clients.ndlocr_client import cleanup_temp_dir
+
+        mock_dir = MagicMock()
+        mock_dir.exists.return_value = True
+        mock_dir.iterdir.side_effect = PermissionError("Access denied")
+
+        # Should not raise, just log warning
+        cleanup_temp_dir(mock_dir)
+
+
+class TestExtractionService:
+    """Tests for extraction service"""
+
+    @pytest.mark.asyncio
+    async def test_extract_text_empty_result(self):
+        """Test empty extraction result"""
+        from app.services.extraction import extract_text_from_image
+        from app.utils.exceptions import TextExtractionFailedError
+
+        with patch("app.services.extraction.extract_text_with_openai", AsyncMock(return_value="")):
+            with patch("app.services.extraction.preprocess_image", return_value=(b"data", "image/jpeg")):
+                with pytest.raises(TextExtractionFailedError):
+                    await extract_text_from_image(
+                        file_bytes=b"test",
+                        content_type="image/jpeg",
+                        filename="test.jpg",
+                        ocr_mode="api",
+                    )
+
+    @pytest.mark.asyncio
+    async def test_extract_text_whitespace_only(self):
+        """Test whitespace only result"""
+        from app.services.extraction import extract_text_from_image
+        from app.utils.exceptions import TextExtractionFailedError
+
+        with patch("app.services.extraction.extract_text_with_openai", AsyncMock(return_value="   \n\n  ")):
+            with patch("app.services.extraction.preprocess_image", return_value=(b"data", "image/jpeg")):
+                with pytest.raises(TextExtractionFailedError):
+                    await extract_text_from_image(
+                        file_bytes=b"test",
+                        content_type="image/jpeg",
+                        filename="test.jpg",
+                        ocr_mode="api",
+                    )
+
+
+class TestSummarizationService:
+    """Tests for summarization service"""
+
+    @pytest.mark.asyncio
+    async def test_summarize_empty_result(self):
+        """Test empty summarization result"""
+        from app.services.summarization import summarize_text
+        from app.utils.exceptions import SummaryGenerationFailedError
+
+        with patch("app.services.summarization.summarize_text_with_openai", AsyncMock(return_value={"summary": ""})):
+            with pytest.raises(SummaryGenerationFailedError):
+                await summarize_text("test text", summary_mode="api")
+
+    @pytest.mark.asyncio
+    async def test_summarize_none_result(self):
+        """Test None summarization result"""
+        from app.services.summarization import summarize_text
+        from app.utils.exceptions import SummaryGenerationFailedError
+
+        with patch("app.services.summarization.summarize_text_with_openai", AsyncMock(return_value={})):
+            with pytest.raises(SummaryGenerationFailedError):
+                await summarize_text("test text", summary_mode="api")
+
+
+class TestOpenAIClientSummary:
+    """Tests for OpenAI client summarization"""
+
+    @pytest.mark.asyncio
+    async def test_summarize_rate_limit(self):
+        """Test rate limit during summarization"""
+        from app.clients.openai_client import summarize_text_with_openai
+        from openai import RateLimitError
+        from app.utils.exceptions import OpenAIAPIError
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.parse = AsyncMock(
+            side_effect=RateLimitError("Rate limit", response=MagicMock(), body=None)
+        )
+
+        with patch("app.clients.openai_client.get_openai_client", AsyncMock(return_value=mock_client)):
+            with pytest.raises(OpenAIAPIError):
+                await summarize_text_with_openai("test text")
+
+    @pytest.mark.asyncio
+    async def test_summarize_api_error(self):
+        """Test API error during summarization"""
+        from app.clients.openai_client import summarize_text_with_openai
+        from openai import APIError
+        from app.utils.exceptions import OpenAIAPIError
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.parse = AsyncMock(
+            side_effect=APIError("API error", body=None, request=MagicMock())
+        )
+
+        with patch("app.clients.openai_client.get_openai_client", AsyncMock(return_value=mock_client)):
+            with pytest.raises(OpenAIAPIError):
+                await summarize_text_with_openai("test text")
+
+
+class TestNDLOCRClientMore:
+    """More tests for NDLOCR client"""
+
+    def test_check_ndlocr_settings_success(self):
+        """Test successful settings check"""
+        from app.clients.ndlocr_client import check_ndlocr_settings
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_lite_path = "/valid/path"
+
+            with patch("pathlib.Path.exists", return_value=True):
+                result = check_ndlocr_settings()
+
+                assert result is not None
+
+    def test_get_temp_dir_with_settings(self):
+        """Test temp dir with custom settings"""
+        from app.clients.ndlocr_client import get_temp_dir
+        from pathlib import Path
+
+        with patch("app.clients.ndlocr_client.settings") as mock_settings:
+            mock_settings.ndlocr_temp_dir = "/custom/temp"
+
+            result = get_temp_dir()
+
+            # Convert to Path for comparison (handles Windows paths)
+            expected = Path("/custom/temp")
+            assert str(result).replace("\\", "/") == str(expected).replace("\\", "/")
+
+    def test_need_fallback_exception(self):
+        """Test _NeedFallback exception"""
+        from app.clients.ndlocr_client import _NeedFallback
+
+        exc = _NeedFallback()
+        assert isinstance(exc, Exception)
+
+    @pytest.mark.asyncio
+    async def test_run_ndlocr_fallback_not_found(self):
+        """Test fallback ocr.py not found"""
+        from app.clients.ndlocr_client import run_ndlocr_fallback
+        from app.utils.exceptions import NDLOCRExecutionFailedError
+
+        # Create mock path that chains: path / "src" / "ocr.py" -> exists = False
+        mock_path = MagicMock()
+        mock_src = MagicMock()
+        mock_ocr_py = MagicMock()
+        mock_ocr_py.exists.return_value = False
+        # Chain: path / "src" -> mock_src, then mock_src / "ocr.py" -> mock_ocr_py
+        mock_src.__truediv__ = MagicMock(return_value=mock_ocr_py)
+        mock_path.__truediv__ = MagicMock(return_value=mock_src)
+
+        # Should raise NDLOCRExecutionFailedError before subprocess.run is called
+        with pytest.raises(NDLOCRExecutionFailedError):
+            await run_ndlocr_fallback(
+                ndlocr_path=mock_path,
+                input_path="test.jpg",
+                output_dir="output",
+            )
