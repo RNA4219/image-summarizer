@@ -152,8 +152,8 @@ OPENAI_MODEL=gpt-4o-mini
 
 # local_llm 利用時
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_OCR_MODEL=Qwen3.6-35B-A3B
-OLLAMA_SUMMARY_MODEL=Qwen3.6-35B-A3B
+OLLAMA_OCR_MODEL=gemma4:e2b
+OLLAMA_SUMMARY_MODEL=gemma4:e2b
 
 # high_accuracy 利用時
 NDLOCR_LITE_PATH=/path/to/ndlocr-lite
