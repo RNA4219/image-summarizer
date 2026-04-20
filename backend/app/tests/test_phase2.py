@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
+from io import BytesIO
 
 from app.clients.ollama_client import (
     check_ollama_settings,
@@ -389,3 +390,148 @@ class TestSummaryModes:
 
             assert result["summary"] == "Ollama summary"
             mock_ollama.assert_called_once()
+
+
+class TestInvalidModeErrors:
+    """Tests for invalid mode error handling"""
+
+    def test_invalid_ocr_mode_error(self):
+        """Test InvalidOcrModeError has correct code and status"""
+        from app.utils.exceptions import InvalidOcrModeError
+        error = InvalidOcrModeError()
+        assert error.code == "INVALID_OCR_MODE"
+        assert error.status_code == 400
+
+    def test_invalid_summary_mode_error(self):
+        """Test InvalidSummaryModeError has correct code and status"""
+        from app.utils.exceptions import InvalidSummaryModeError
+        error = InvalidSummaryModeError()
+        assert error.code == "INVALID_SUMMARY_MODE"
+        assert error.status_code == 400
+
+    def test_validate_ocr_mode_invalid(self):
+        """Test validate_ocr_mode raises error for invalid mode"""
+        from app.routers.summarize import validate_ocr_mode
+        from app.utils.exceptions import InvalidOcrModeError
+
+        with pytest.raises(InvalidOcrModeError):
+            validate_ocr_mode("invalid_mode")
+
+    def test_validate_ocr_mode_valid(self):
+        """Test validate_ocr_mode accepts valid modes"""
+        from app.routers.summarize import validate_ocr_mode
+
+        # Should not raise
+        validate_ocr_mode("api")
+        validate_ocr_mode("local_llm")
+        validate_ocr_mode("high_accuracy")
+
+    def test_validate_summary_mode_invalid(self):
+        """Test validate_summary_mode raises error for invalid mode"""
+        from app.routers.summarize import validate_summary_mode
+        from app.utils.exceptions import InvalidSummaryModeError
+
+        with pytest.raises(InvalidSummaryModeError):
+            validate_summary_mode("invalid_mode")
+
+    def test_validate_summary_mode_valid(self):
+        """Test validate_summary_mode accepts valid modes"""
+        from app.routers.summarize import validate_summary_mode
+
+        # Should not raise
+        validate_summary_mode("api")
+        validate_summary_mode("local_llm")
+
+
+class TestInvalidModeAPI:
+    """Tests for invalid mode handling at API level"""
+
+    @pytest.mark.asyncio
+    async def test_api_invalid_ocr_mode_returns_400(self):
+        """Test that invalid ocr_mode returns HTTP 400 with INVALID_OCR_MODE"""
+        from httpx import AsyncClient, ASGITransport
+        from app.main import app
+
+        # Create a fake image file
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")  # Minimal JPEG header
+        fake_image.name = "test.jpg"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/summarize",
+                files={"file": ("test.jpg", fake_image, "image/jpeg")},
+                data={"ocr_mode": "invalid_mode", "summary_mode": "api"},
+            )
+
+            assert response.status_code == 400
+            data = response.json()
+            assert data["error"]["code"] == "INVALID_OCR_MODE"
+            assert "OCR" in data["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_api_invalid_summary_mode_returns_400(self):
+        """Test that invalid summary_mode returns HTTP 400 with INVALID_SUMMARY_MODE"""
+        from httpx import AsyncClient, ASGITransport
+        from app.main import app
+
+        # Create a fake image file
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")  # Minimal JPEG header
+        fake_image.name = "test.jpg"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/summarize",
+                files={"file": ("test.jpg", fake_image, "image/jpeg")},
+                data={"ocr_mode": "api", "summary_mode": "invalid_mode"},
+            )
+
+            assert response.status_code == 400
+            data = response.json()
+            assert data["error"]["code"] == "INVALID_SUMMARY_MODE"
+            assert "要約" in data["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_api_multiple_invalid_ocr_mode_returns_400(self):
+        """Test that invalid ocr_mode on multiple endpoint returns HTTP 400"""
+        from httpx import AsyncClient, ASGITransport
+        from app.main import app
+
+        # Create a fake image file
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+        fake_image.name = "test.jpg"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/summarize-multiple",
+                files=[("files", ("test.jpg", fake_image, "image/jpeg"))],
+                data={"ocr_mode": "invalid_mode", "summary_mode": "api"},
+            )
+
+            assert response.status_code == 400
+            data = response.json()
+            assert data["error"]["code"] == "INVALID_OCR_MODE"
+
+    @pytest.mark.asyncio
+    async def test_api_multiple_invalid_summary_mode_returns_400(self):
+        """Test that invalid summary_mode on multiple endpoint returns HTTP 400"""
+        from httpx import AsyncClient, ASGITransport
+        from app.main import app
+
+        # Create a fake image file
+        fake_image = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+        fake_image.name = "test.jpg"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/summarize-multiple",
+                files=[("files", ("test.jpg", fake_image, "image/jpeg"))],
+                data={"ocr_mode": "api", "summary_mode": "invalid_mode"},
+            )
+
+            assert response.status_code == 400
+            data = response.json()
+            assert data["error"]["code"] == "INVALID_SUMMARY_MODE"

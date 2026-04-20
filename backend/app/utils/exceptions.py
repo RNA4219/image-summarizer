@@ -41,6 +41,22 @@ class FileTooLargeError(AppError):
     status_code = 413
 
 
+class InvalidOcrModeError(AppError):
+    """OCR方式不正"""
+
+    code = "INVALID_OCR_MODE"
+    message = "OCR方式が不正です。"
+    status_code = 400
+
+
+class InvalidSummaryModeError(AppError):
+    """要約方式不正"""
+
+    code = "INVALID_SUMMARY_MODE"
+    message = "要約方式が不正です。"
+    status_code = 400
+
+
 class TextExtractionFailedError(AppError):
     """テキスト抽出失敗"""
 

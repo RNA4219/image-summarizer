@@ -6,10 +6,26 @@ from fastapi import APIRouter, File, UploadFile, Form
 from app.schemas.summarize import SummarizeResponse, MultiSummarizeResponse
 from app.schemas.error import ErrorResponse
 from app.services.pipeline import process_single_image, process_single_image_safe
+from app.utils.exceptions import InvalidOcrModeError, InvalidSummaryModeError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+VALID_OCR_MODES = ["api", "local_llm", "high_accuracy"]
+VALID_SUMMARY_MODES = ["api", "local_llm"]
+
+
+def validate_ocr_mode(ocr_mode: str) -> None:
+    """Validate OCR mode."""
+    if ocr_mode not in VALID_OCR_MODES:
+        raise InvalidOcrModeError()
+
+
+def validate_summary_mode(summary_mode: str) -> None:
+    """Validate summary mode."""
+    if summary_mode not in VALID_SUMMARY_MODES:
+        raise InvalidSummaryModeError()
 
 
 @router.post(
@@ -41,16 +57,8 @@ async def summarize(
     logger.info(f"ocr_mode: {ocr_mode}, summary_mode: {summary_mode}")
 
     # Validate modes
-    valid_ocr_modes = ["api", "local_llm", "high_accuracy"]
-    valid_summary_modes = ["api", "local_llm"]
-
-    if ocr_mode not in valid_ocr_modes:
-        from app.utils.exceptions import AppError
-        raise AppError(code="INVALID_OCR_MODE", message="OCR方式が不正です。", status_code=400)
-
-    if summary_mode not in valid_summary_modes:
-        from app.utils.exceptions import AppError
-        raise AppError(code="INVALID_SUMMARY_MODE", message="要約方式が不正です。", status_code=400)
+    validate_ocr_mode(ocr_mode)
+    validate_summary_mode(summary_mode)
 
     result = await process_single_image(file, ocr_mode=ocr_mode, summary_mode=summary_mode)
 
@@ -93,16 +101,8 @@ async def summarize_multiple(
     logger.info(f"ocr_mode: {ocr_mode}, summary_mode: {summary_mode}")
 
     # Validate modes
-    valid_ocr_modes = ["api", "local_llm", "high_accuracy"]
-    valid_summary_modes = ["api", "local_llm"]
-
-    if ocr_mode not in valid_ocr_modes:
-        from app.utils.exceptions import AppError
-        raise AppError(code="INVALID_OCR_MODE", message="OCR方式が不正です。", status_code=400)
-
-    if summary_mode not in valid_summary_modes:
-        from app.utils.exceptions import AppError
-        raise AppError(code="INVALID_SUMMARY_MODE", message="要約方式が不正です。", status_code=400)
+    validate_ocr_mode(ocr_mode)
+    validate_summary_mode(summary_mode)
 
     results = []
     success_count = 0
